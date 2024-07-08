@@ -1,279 +1,173 @@
+"""
+Voorspelling van close-prijs met behulp van LSTM.
+
+Door: David Moerdijk
+Open source
+"""
+
 import pandas as pd
 import numpy as np
-
 import matplotlib.pyplot as plt
 import seaborn as sns
+import yfinance as yf
+from pandas_datareader import data as pdr
+from datetime import datetime
+from sklearn.preprocessing import MinMaxScaler
+from keras.models import Sequential
+from keras.layers import Dense, LSTM
+from sklearn.model_selection import train_test_split
+
+# Set plotting style
 sns.set_style('whitegrid')
 plt.style.use("fivethirtyeight")
 
-# For reading stock data from yahoo
-from pandas_datareader.data import DataReader
-import yfinance as yf
-from pandas_datareader import data as pdr
-
+# Override yfinance with pandas_datareader's data
 yf.pdr_override()
 
-# For time stamps
-from datetime import datetime
+def download_stock_data(stocks, start, end):
+    """Download stock data for given stocks between start and end dates."""
+    stock_data = {}
+    for stock in stocks:
+        stock_data[stock] = yf.download(stock, start, end)
+        stock_data[stock]["company_name"] = stock
+    return stock_data
 
-# The tech stocks we'll use for this analysis
-tech_list = ['AAPL', 'GOOG', 'MSFT', 'AMZN']
+def plot_closing_prices(stock_data):
+    """Plot closing prices for stocks."""
+    plt.figure(figsize=(15, 10))
+    for i, (stock, data) in enumerate(stock_data.items(), 1):
+        plt.subplot(2, 2, i)
+        data['Adj Close'].plot()
+        plt.ylabel('Adj Close')
+        plt.title(f"Closing Price of {stock}")
+    plt.tight_layout()
+    plt.savefig('figures/ClosingPrices.png')
+    plt.clf()
 
-end = datetime.now()
-start = datetime(end.year - 1, end.month, end.day)
+def add_moving_averages(stock_data, days=[10, 20, 50]):
+    """Add moving averages for specified days to stock data."""
+    for stock, data in stock_data.items():
+        for day in days:
+            column_name = f"MA for {day} days"
+            data[column_name] = data['Adj Close'].rolling(day).mean()
 
-for stock in tech_list:
-    globals()[stock] = yf.download(stock, start, end)
+def plot_daily_returns(stock_data):
+    """Plot daily return percentage for stocks."""
+    plt.figure(figsize=(15, 10))
+    for i, (stock, data) in enumerate(stock_data.items(), 1):
+        data['Daily Return'] = data['Adj Close'].pct_change()
+        plt.subplot(2, 2, i)
+        data['Daily Return'].plot(legend=True, linestyle='--', marker='o')
+        plt.title(stock)
+    plt.tight_layout()
+    plt.savefig('figures/DailyReturns.png')
+    plt.clf()
 
-company_list = [AAPL, GOOG, MSFT, AMZN]
-company_name = ["APPLE", "GOOGLE", "MICROSOFT", "AMAZON"]
+def get_scaled_data(data, scaler):
+    """Scale data using MinMaxScaler."""
+    return scaler.fit_transform(data)
 
-for company, com_name in zip(company_list, company_name):
-    company["company_name"] = com_name
+def prepare_data(scaled_data, look_back_window_size=60):
+    """Prepare training data from scaled data."""
+    X, Y = [], []
+    for i in range(len(scaled_data) - look_back_window_size):
+        X.append(scaled_data[i:(i + look_back_window_size), 0])
+        Y.append(scaled_data[i + look_back_window_size, 0])
+    return np.array(X), np.array(Y)
 
-df = pd.concat(company_list, axis=0)
-df.tail(10)
+def build_and_train_model(x_train, y_train):
+    """Build and train LSTM model."""
+    model = Sequential([
+        LSTM(128, return_sequences=True, input_shape=(x_train.shape[1], 1)),
+        LSTM(64, return_sequences=False),
+        Dense(25),
+        Dense(1)
+    ])
+    model.compile(optimizer='adam', loss='mean_squared_error')
+    model.fit(x_train, y_train, batch_size=1, epochs=1)
+    return model
 
-# Let's see a historical view of the closing price
-plt.figure(figsize=(15, 10))
-plt.subplots_adjust(top=1.25, bottom=1.2)
+def predict_closing_price(model, x_valid, scaler):
+    """Predict closing price using the model."""
+    predictions = model.predict(x_valid)
+    predictions = scaler.inverse_transform(predictions)
+    return predictions
 
-for i, company in enumerate(company_list, 1):
-    plt.subplot(2, 2, i)
-    company['Adj Close'].plot()
-    plt.ylabel('Adj Close')
-    plt.xlabel(None)
-    plt.title(f"Closing Price of {tech_list[i - 1]}")
-plt.tight_layout()
-plt.savefig(f'figures/ClosingPriceof{tech_list[i - 1].replace(" ", "")}')
-plt.clf()
-
-ma_day = [10, 20, 50]
-
-for ma in ma_day:
-    for company in company_list:
-        column_name = f"MA for {ma} days"
-        company[column_name] = company['Adj Close'].rolling(ma).mean()
-
-fig, axes = plt.subplots(nrows=2, ncols=2)
-fig.set_figheight(10)
-fig.set_figwidth(15)
-
-AAPL[['Adj Close', 'MA for 10 days', 'MA for 20 days', 'MA for 50 days']].plot(ax=axes[0,0])
-axes[0,0].set_title('APPLE')
-
-GOOG[['Adj Close', 'MA for 10 days', 'MA for 20 days', 'MA for 50 days']].plot(ax=axes[0,1])
-axes[0,1].set_title('GOOGLE')
-
-MSFT[['Adj Close', 'MA for 10 days', 'MA for 20 days', 'MA for 50 days']].plot(ax=axes[1,0])
-axes[1,0].set_title('MICROSOFT')
-
-AMZN[['Adj Close', 'MA for 10 days', 'MA for 20 days', 'MA for 50 days']].plot(ax=axes[1,1])
-axes[1,1].set_title('AMAZON')
-
-fig.tight_layout()
-plt.savefig('figures/MovingAverages')
-plt.clf()
-
-# We'll use pct_change to find the percent change for each day
-for company in company_list:
-    company['Daily Return'] = company['Adj Close'].pct_change()
-
-# Then we'll plot the daily return percentage
-fig, axes = plt.subplots(nrows=2, ncols=2)
-fig.set_figheight(10)
-fig.set_figwidth(15)
-
-AAPL['Daily Return'].plot(ax=axes[0,0], legend=True, linestyle='--', marker='o')
-axes[0,0].set_title('APPLE')
-
-GOOG['Daily Return'].plot(ax=axes[0,1], legend=True, linestyle='--', marker='o')
-axes[0,1].set_title('GOOGLE')
-
-MSFT['Daily Return'].plot(ax=axes[1,0], legend=True, linestyle='--', marker='o')
-axes[1,0].set_title('MICROSOFT')
-
-AMZN['Daily Return'].plot(ax=axes[1,1], legend=True, linestyle='--', marker='o')
-axes[1,1].set_title('AMAZON')
-
-fig.tight_layout()
-plt.savefig('figures/DailyReturnPercentage')
-plt.clf()
-
-plt.figure(figsize=(12, 9))
-
-for i, company in enumerate(company_list, 1):
-    plt.subplot(2, 2, i)
-    company['Daily Return'].hist(bins=50)
-    plt.xlabel('Daily Return')
-    plt.ylabel('Counts')
-    plt.title(f'{company_name[i - 1]}')
-plt.tight_layout()
-plt.savefig('figures/DailyReturnHistogram')
-plt.clf()
-
-# Grab all the closing prices for the tech stock list into one DataFrame
-closing_df = pdr.get_data_yahoo(tech_list, start=start, end=end)['Adj Close']
-
-# Make a new tech returns DataFrame
-tech_rets = closing_df.pct_change()
-tech_rets.head()
-
-# Comparing Google to itself should show a perfectly linear relationship
-sns.jointplot(x='GOOG', y='GOOG', data=tech_rets, kind='scatter', color='seagreen')
-plt.savefig('figures/GOOGvsGOOG')
-plt.clf()
-
-# We'll use joinplot to compare the daily returns of Google and Microsoft
-sns.jointplot(x='GOOG', y='MSFT', data=tech_rets, kind='scatter')
-plt.savefig('figures/GOOGvsMSFT')
-plt.clf()
-
-# We can simply call pairplot on our DataFrame for an automatic visual analysis of all the comparisons
-sns.pairplot(tech_rets, kind='reg')
-plt.savefig('figures/TechRetsPairplot')
-plt.clf()
-
-# Set up our figure by naming it returns_fig, call PairPLot on the DataFrame
-return_fig = sns.PairGrid(tech_rets.dropna())
-return_fig.map_upper(plt.scatter, color='purple')
-return_fig.map_lower(sns.kdeplot, cmap='cool_d')
-return_fig.map_diag(plt.hist, bins=30)
-plt.savefig('figures/TechRetsPairGrid')
-plt.clf()
-
-# Set up our figure by naming it returns_fig, call PairPLot on the DataFrame
-returns_fig = sns.PairGrid(closing_df)
-returns_fig.map_upper(plt.scatter,color='purple')
-returns_fig.map_lower(sns.kdeplot,cmap='cool_d')
-returns_fig.map_diag(plt.hist,bins=30)
-plt.savefig('figures/ClosingPricePairGrid')
-plt.clf()
-
-plt.figure(figsize=(12, 10))
-
-plt.subplot(2, 2, 1)
-sns.heatmap(tech_rets.corr(), annot=True, cmap='summer')
-plt.title('Correlation of stock return')
-
-plt.subplot(2, 2, 2)
-sns.heatmap(closing_df.corr(), annot=True, cmap='summer')
-plt.title('Correlation of stock closing price')
-
-plt.savefig('figures/StockCorrelation')
-plt.clf()
-
-rets = tech_rets.dropna()
-
-area = np.pi * 20
-
-plt.figure(figsize=(10, 8))
-plt.scatter(rets.mean(), rets.std(), s=area)
-plt.xlabel('Expected return')
-plt.ylabel('Risk')
-
-for label, x, y in zip(rets.columns, rets.mean(), rets.std()):
-    plt.annotate(label, xy=(x, y), xytext=(50, 50), textcoords='offset points', ha='right', va='bottom', 
-                 arrowprops=dict(arrowstyle='-', color='blue', connectionstyle='arc3,rad=-0.3'))
-
-plt.savefig('figures/ExpectedReturnVsRisk')
-plt.clf()
-
-# Get the stock quote
-df = pdr.get_data_yahoo('AAPL', start='2012-01-01', end=datetime.now())
-
-plt.figure(figsize=(16,6))
-plt.title('Close Price History')
-plt.plot(df['Close'])
-plt.xlabel('Date', fontsize=18)
-plt.ylabel('Close Price USD ($)', fontsize=18)
-plt.savefig('figures/ClosePriceHistory')
-plt.show()
-plt.clf()
-
-# Create a new dataframe with only the 'Close column 
-data = df.filter(['Close'])
-# Convert the dataframe to a numpy array
-dataset = data.values
-# Get the number of rows to train the model on
-training_data_len = int(np.ceil( len(dataset) * .95 ))
-
-# Scale the data
-from sklearn.preprocessing import MinMaxScaler
-
-scaler = MinMaxScaler(feature_range=(0,1))
-scaled_data = scaler.fit_transform(dataset)
-
-# Create the training data set 
-# Create the scaled training data set
-train_data = scaled_data[0:int(training_data_len), :]
-# Split the data into x_train and y_train data sets
-x_train = []
-y_train = []
-
-for i in range(60, len(train_data)):
-    x_train.append(train_data[i-60:i, 0])
-    y_train.append(train_data[i, 0])
-    if i<= 61:
-        print(x_train)
-        print(y_train)
-        print()
-        
-# Convert the x_train and y_train to numpy arrays 
-x_train, y_train = np.array(x_train), np.array(y_train)
-
-# Reshape the data
-x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
-
-from keras.models import Sequential
-from keras.layers import Dense, LSTM
-
-# Build the LSTM model
-model = Sequential()
-model.add(LSTM(128, return_sequences=True, input_shape= (x_train.shape[1], 1)))
-model.add(LSTM(64, return_sequences=False))
-model.add(Dense(25))
-model.add(Dense(1))
-
-# Compile the model
-model.compile(optimizer='adam', loss='mean_squared_error')
-
-# Train the model
-model.fit(x_train, y_train, batch_size=1, epochs=1)
-
-# Create the testing data set
-# Create a new array containing scaled values from index 1543 to 2002 
-test_data = scaled_data[training_data_len - 60: , :]
-# Create the data sets x_test and y_test
-x_test = []
-y_test = dataset[training_data_len:, :]
-for i in range(60, len(test_data)):
-    x_test.append(test_data[i-60:i, 0])
+def plot_predictions(x_train, y_train, x_valid, predictions, Y, scaler, stock_ticker=None):
+    """
+    Plot the training, validation, and predicted prices to visualize the model's performance.
     
-# Convert the data to a numpy array
-x_test = np.array(x_test)
+    Parameters:
+    - x_train: Training data features.
+    - y_train: Training data labels.
+    - x_valid: Validation data features.
+    - predictions: Predicted values for the validation set.
+    """
+    plt.figure(figsize=(16,6))
+    title = 'Predictions of Closing Prices'
+    if stock_ticker:
+        title += f' for {stock_ticker}'
+    plt.title('Model Performance')
+    plt.xlabel('Time', fontsize=18)
+    plt.ylabel('Normalized Price', fontsize=18)
+    # Assuming x_train, y_train, and x_valid are sequences of normalized prices
+    train_len = len(x_train)
+    valid_len = train_len + len(x_valid)
+    
+    # scale back the data to original form (apply inverse transform to x_valid and y_train)
+    x_valid = scaler.inverse_transform(x_valid)
+    y_train = scaler.inverse_transform(y_train.reshape(-1, 1))
+    
+    plt.plot(range(train_len), y_train, label='Train')
+    # plt.plot(range(train_len, valid_len), x_valid[:, 0], label='Val')
+    Y = scaler.inverse_transform(Y.reshape(-1, 1))
+    plt.plot(range(train_len, valid_len), Y[train_len:valid_len], label='Validation (true value)')
+    plt.plot(range(train_len, valid_len), predictions, label='Predictions')
+    plt.legend(loc='lower right')
+    plt.savefig(f'figures/model_performance_{stock_ticker}.png')
+    plt.clf()
 
-# Reshape the data
-x_test = np.reshape(x_test, (x_test.shape[0], x_test.shape[1], 1 ))
+def main():
+#     1. Alibaba
+# 2. Alphabet Inc. (Google)
+# 3. Berkshire Hathaway (Zowel A als B)
+# 4. Ahold Delhaize
 
-# Get the models predicted price values 
-predictions = model.predict(x_test)
-predictions = scaler.inverse_transform(predictions)
+    stock_list = ["BABA", "GOOGL", "BRK-A", "BRK-B", "AD.AS"]
+    end = datetime.now()
+    start = datetime(end.year - 1, end.month, end.day)
 
-# Get the root mean squared error (RMSE)
-rmse = np.sqrt(np.mean(((predictions - y_test) ** 2)))
+    stock_data = download_stock_data(stock_list, start, end)
+    for stock_ticker in stock_list:
+        if stock_data[stock_ticker].empty:
+            raise ValueError(f"No data found for {stock_ticker}")
+    
+    for stock_ticker in stock_list:
+        look_back_window_size = 100
+        test_size = 0.2
+        
+        if len(stock_data) == 4:
+            plot_closing_prices(stock_data)
+            add_moving_averages(stock_data)
+            plot_daily_returns(stock_data)
 
+        # Example for AAPL stock
+        stock_data_current_stock = stock_data[stock_ticker]['Close'].values.reshape(-1, 1)
+        scaler = MinMaxScaler(feature_range=(0,1))
+        scaled_data = get_scaled_data(stock_data_current_stock, scaler)
+        X, Y = prepare_data(scaled_data, look_back_window_size)
+        
+        # Manually splicing the data for train and validation sets
+        split_index = int(len(X) * (1 - test_size))
+        x_train, x_valid = X[:split_index], X[split_index:]
+        y_train, y_valid = Y[:split_index], Y[split_index:]
+        
+        model = build_and_train_model(x_train, y_train)
+        predictions = predict_closing_price(model, x_valid, scaler)
+        
+        
+        # Assuming 'train' and 'valid' DataFrames are already defined as per the previous code block
+        plot_predictions(x_train, y_train, x_valid, predictions, Y, scaler, stock_ticker)
 
-# Plot the data
-train = data[:training_data_len]
-valid = data[training_data_len:]
-valid['Predictions'] = predictions
-# Visualize the data
-plt.figure(figsize=(16,6))
-plt.title('Model')
-plt.xlabel('Date', fontsize=18)
-plt.ylabel('Close Price USD ($)', fontsize=18)
-plt.plot(train['Close'])
-plt.plot(valid[['Close', 'Predictions']])
-plt.legend(['Train', 'Val', 'Predictions'], loc='lower right')
-plt.savefig('figures/stock_prediction.png')
+if __name__ == "__main__":
+    main()  
