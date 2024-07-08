@@ -107,7 +107,7 @@ def plot_predictions(x_train, y_train, x_valid, predictions, Y, scaler, stock_ti
     title = 'Predictions of Closing Prices'
     if stock_ticker:
         title += f' for {stock_ticker}'
-    plt.title('Model Performance')
+    plt.title(title)
     plt.xlabel('Time', fontsize=18)
     plt.ylabel('Normalized Price', fontsize=18)
     # Assuming x_train, y_train, and x_valid are sequences of normalized prices
