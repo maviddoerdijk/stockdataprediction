@@ -12,7 +12,8 @@ Dus, bij deze: mijn attempt om analyse van stocks uit te voeren.
 Methode: LSTM.
 
 Resultaat:
-![Voorspellingen aandelen met gebruik van LSTM ML-model.](stock_prediction.png)
+![image](https://github.com/maviddoerdijk/stockdataprediction/assets/103489575/f9f8957f-5f2f-450c-9237-7d9a9d8d5ae8)
+
 
 Geïnspireerd door:
 https://www.kaggle.com/code/faressayah/stock-market-analysis-prediction-using-lstm
